@@ -1,22 +1,12 @@
 [
     {
-        "key": "ClientId",
-        "type": "input",
-        "defaultValue": "",
-        "templateOptions": {
-            "label": "ClientId",
-            "description": "The ClientId to connect to the API",
-            "required": true
-        }
-    },
-    {
-        "key": "ClientSecret",
+        "key": "access_token",
         "type": "input",
         "defaultValue": "",
         "templateOptions": {
             "type": "password",
-            "description": "The ClientSecret to connect to the API",
-            "label": "ClientSecret",
+            "description": "The Access Token to connect to the API",
+            "label": "Access Token",
             "required": true
         }
     },
@@ -27,26 +17,6 @@
         "templateOptions": {
             "label": "BaseUrl",
             "description": "The URL to the API.",
-            "required": true
-        }
-    },
-    {
-        "key": "RedirectUri",
-        "type": "input",
-        "defaultValue": "",
-        "templateOptions": {
-            "label": "RedirectUri",
-            "description": "The redirect uri used in the initial request",
-            "required": true
-        }
-    },
-    {
-        "key": "Code",
-        "type": "input",
-        "defaultValue": "",
-        "templateOptions": {
-            "label": "Code",
-            "description": "This code will be provided by Canvas",
             "required": true
         }
     },

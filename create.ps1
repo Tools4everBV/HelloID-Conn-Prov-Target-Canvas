@@ -11,41 +11,44 @@ $auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 # Account mapping
 $account = [PSCustomObject]@{
-    # User [user]
     # The 'name' is the full name of the person
-    'user[name]' = "$($p.Name.GivenName) $($p.Name.FamilyName)"
-
     # The 'short_name' is the user's name as it will be displayed in the UI
-    'user[short_name]'    = $p.DisplayName
-    'user[sortable_name]' = ""
-
     # Timezones myst be IANA time zones like: CE, CEST, CEMT
-    'user[time_zone]'         = 'CEST'
-    'user[terms_of_use]'      = $true
-    'user[skip_registration]' = $true
-
     # The 'locale' is the user's preferred language like: en, de, nl, nl_BE, en_US, etc..
-    'user[locale]' = 'nl'
-
-    # User [communication_channel]
-    'communication_channel[type]'              = 'email'
-    'communication_channel[address]'           = $p.Accounts.MicrosoftActiveDirectory.mail
-    'communication_channel[skip_confirmation]' = $true
-
-    # User [pseudnonym]
+    user                  = @{
+        name              = $p.DisplayName
+        short_name        = "$($p.Name.GivenName) $($p.Name.FamilyName)"
+        sortable_name     = "$($p.Name.FamilyName), $($p.Name.GivenName)"
+        time_zone         = 'CEST'
+        terms_of_use      = $true
+        skip_registration = $true
+        locale            = 'nl'
+    }
+    communication_channel = @{
+        type              = 'email'
+        address           = "$($p.Contact.Business.email)"
+        skip_confirmation = $true
+    }
     # the 'unique_id' for self registration must be set to the emailAddress
-    'pseudnonym[unique_i]'          = $p.ExternalId
-    'pseudnonym[password]'          = 'Work'
-    'pseudnonym[send_confirmation]' = $true
+    pseudonym             = @{
+        unique_id         = "$($p.Contact.Business.email)"
+        password          = 'Welkom123xxxxxxx'
+        send_confirmation = $true
+        sis_user_id       = ''
+        integration_id    = ''
+    }
 }
 
-# Updated account mapping
-$updateAccount = @{
-    'user[name]'          = "$($p.Name.GivenName) $($p.Name.FamilyName)"
-    'user[short_name]'    = $p.DisplayName
-    'user[sortable_name]' = ""
-    'user[email]'         = $p.Accounts.MicrosoftActiveDirectory.mail
+$accountUpdateBody = [PSCustomObject]@{
+    user = [PSCustomObject]@{
+        name          = $account.user.name
+        short_name    = $account.user.short_name
+        sortable_name = $account.user.sortable_name
+        email         = $account.communication_channel.address
+        # title         = '' Only possible in Update webrequest
+    }
 }
+
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
@@ -57,29 +60,55 @@ switch ($($config.IsDebug)) {
 }
 
 # Set to true if accounts in the target system must be updated
-$updatePerson = $false
+$updatePerson = $true
 
 #region functions
 function Resolve-HTTPError {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory,
-            ValueFromPipeline
-        )]
-        [object]$ErrorObject
+        [Parameter(Mandatory)]
+        [object]
+        $ErrorObject
     )
     process {
         $httpErrorObj = [PSCustomObject]@{
-            FullyQualifiedErrorId = $ErrorObject.FullyQualifiedErrorId
-            MyCommand             = $ErrorObject.InvocationInfo.MyCommand
-            RequestUri            = $ErrorObject.TargetObject.RequestUri
-            ScriptStackTrace      = $ErrorObject.ScriptStackTrace
-            ErrorMessage          = ''
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = ''
+            FriendlyMessage  = ''
         }
         if ($ErrorObject.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') {
-            $httpErrorObj.ErrorMessage = $ErrorObject.ErrorDetails.Message
+            $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $ErrorObject.ErrorDetails.Message
+
+            if ($null -ne $ErrorObject.ErrorDetails.Message ) {
+                $jsonErrorObject = $ErrorObject.ErrorDetails.Message | ConvertFrom-Json
+            }
+
+            $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
+                { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
+                { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
+                { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
+                { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
+                default { $ErrorObject.ErrorDetails.Message }
+            }
+
+
         } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
-            $httpErrorObj.ErrorMessage = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+            if ($null -eq $ErrorObject.Exception.Response) {
+                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message
+                $httpErrorObj.FriendlyMessage = $ErrorObject.Exception.Message
+            } else {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $streamReaderResponse
+                $jsonErrorObject = $streamReaderResponse | ConvertFrom-Json
+                $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
+                    { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
+                    { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
+                    { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
+                    { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
+                    default { $streamReaderResponse }
+                }
+            }
         }
         Write-Output $httpErrorObj
     }
@@ -88,33 +117,23 @@ function Resolve-HTTPError {
 
 # Begin
 try {
-    Write-Verbose 'Retrieving authorization token'
-    $headers = [System.Collections.Generic.Dictionary[string, string]]::new()
-    $headers.Add("Content-Type", "application/x-www-form-urlencoded")
-    $tokenBody = @{
-        client_id     = $($config.ClientId)
-        client_secret = $($config.ClientSecret)
-        redirect_uri  = $($config.RedirectUri)
-        code          = $($config.Code)
-        grant_type    = 'authorization_code'
-    }
-    $tokenResponse = Invoke-RestMethod -Uri "$($config.BaseUrl)/login/oauth2/token" -Method 'POST' -Headers $headers -Body $tokenBody -verbose:$false
-
     Write-Verbose 'Setting authorization header'
     $headers = [System.Collections.Generic.Dictionary[string, string]]::new()
-    $headers.Add("Authorization", "Bearer $($tokenResponse.access_token)")
+    $headers.Add('Authorization', "Bearer $($config.access_token)")
+    $headers.Add('Accept', 'application/Json')
+    $headers.Add('Content-Type', 'application/Json')
 
     # Verify if a user must be either [created and correlated], [updated and correlated] or just [correlated]
-    Write-Verbose 'Retrieving all accounts'
+    Write-Verbose "Retrieving accounts with [search_term=$($account.pseudonym.unique_id)]"
     $splatParams = @{
-        Uri     = "$($config.ApiUrl)/api/v1/accounts/$($config.AccountId)/users"
+        Uri     = "$($config.BaseUrl)/api/v1/accounts/$($config.AccountId)/users?search_term=$($account.pseudonym.unique_id)"
         Method  = 'GET'
         Headers = $headers
     }
-    $response = Invoke-RestMethod @splatParams Verbose:$false
-    $lookupUser = $response | Group-Object -Property uid -AsHashTable -AsString
-    $responseUser = $lookupUser[$account.address]
-    if (-not($responseUser)){
+    $response = Invoke-RestMethod @splatParams -Verbose:$false
+    $responseUser = $response | Where-Object { $_.login_id -eq $account.pseudonym.unique_id }
+
+    if (-not($responseUser)) {
         $action = 'Create-Correlate'
     } elseif ($updatePerson -eq $true) {
         $action = 'Update-Correlate'
@@ -133,9 +152,9 @@ try {
     if (-not($dryRun -eq $true)) {
         switch ($action) {
             'Create-Correlate' {
-                Write-Verbose "Creating and correlating Canvas account"
+                Write-Verbose 'Creating and correlating Canvas account'
                 $splatParams = @{
-                    Uri     = "$($config.ApiUrl)/api/v1/accounts/$($config.AccountId)/users"
+                    Uri     = "$($config.BaseUrl)/api/v1/accounts/$($config.AccountId)/users"
                     Method  = 'POST'
                     Headers = $headers
                     Body    = $account | ConvertTo-Json
@@ -146,12 +165,12 @@ try {
             }
 
             'Update-Correlate' {
-                Write-Verbose "Updating and correlating Canvas account"
+                Write-Verbose 'Updating and correlating Canvas account'
                 $splatParams = @{
-                    Uri     = "$($config.ApiUrl)/api/v1/accounts/$($config.AccountId)/users"
+                    Uri     = "$($config.BaseUrl)/api/v1/users/$($responseUser.id)"
                     Method  = 'PUT'
                     Headers = $headers
-                    Body    = $updateAccount | ConvertTo-Json
+                    Body    = $accountUpdateBody  | ConvertTo-Json
                 }
                 $response = Invoke-RestMethod @splatParams -Verbose:$false
                 $accountReference = $response.id
@@ -177,22 +196,23 @@ try {
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-HTTPError -ErrorObject $ex
-        $errorMessage = "Could not $action Canvas account. Error: $($errorObj.ErrorMessage)"
+        $auditMessage = "Could not $action Canvas account. Error: $($errorObj.FriendlyMessage)"
+        Write-Verbose "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     } else {
-        $errorMessage = "Could not $action Canvas account. Error: $($ex.Exception.Message)"
+        $auditMessage = "Could not $action Canvas account. Error: $($ex.Exception.Message)"
+        Write-Verbose "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-    Write-Verbose $errorMessage
     $auditLogs.Add([PSCustomObject]@{
-            Message = $errorMessage
+            Message = $auditMessage
             IsError = $true
         })
-# End
+    # End
 } finally {
     $result = [PSCustomObject]@{
         Success          = $success
         AccountReference = $accountReference
         Auditlogs        = $auditLogs
-        Account          = $account
+        # Account          = $account
     }
     Write-Output $result | ConvertTo-Json -Depth 10
 }

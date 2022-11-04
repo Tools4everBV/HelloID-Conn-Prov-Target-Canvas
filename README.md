@@ -1,9 +1,6 @@
 
 # HelloID-Conn-Prov-Target-Canvas
 
-| :warning: Warning |
-|:---------------------------|
-| Note that this connector is "a work in progress" and therefore not ready to use in your production environment. |
 
 | :information_source: Information |
 |:---------------------------|
@@ -38,65 +35,36 @@ _HelloID-Conn-Prov-Target-Canvas_ is a _target_ connector. Canvas provides a set
 
 The following settings are required to connect to the API.
 
-| Setting           | Description                                  | Mandatory   |
-| ------------      | -----------                                  | ----------- |
-| ClientId          | The ClientId to connect to the API           | Yes         |
-| ClientSecret      | The ClientSecret to connect to the API       | Yes         |
-| BaseUrl           | The URL to the API                           | Yes         |
-| RedirectUri       | The redirect uri used in the initial request | No          |
-| Code              | This code will be provided by Canvas         | Yes         |
-| AccountId         | The AccountId under which the user objects are created | Yes         |
+| Setting           | Description                                             |  Mandatory  |
+| ------------      | -----------                                             | ----------- |
+| Access Token      | The Access Token to connect to the API                  | Yes         |
+| BaseUrl           | The URL to the API                                      | Yes         |
+| AccountId         | The AccountId under which the user objects are created (Id of the company) | Yes         |
 ### Prerequisites
 
+- An Access Token to connect to the API
+- Obtain the AccountId of the customer. You can use the following code.
+
+  ```Powershell
+    $accessToken = ''
+    $baseUrl =  '' # Example 'https://tools.test.instructure.com/'
+
+    $headers = New-Object 'System.Collections.Generic.Dictionary[[String],[String]]'
+    $headers.Add('Authorization', "Bearer $accessToken")
+    $response = Invoke-RestMethod "$baseUrl/api/v1/accounts" -Method 'GET' -Headers $headers
+    $response | ConvertTo-Json
+  ```
+
 ### Remarks
+  - > The delete process might lead to some unexpected behavior.
+  Please verify the delete process. So it matches the customer's requirements.  This because we create users to an Account (company), but the action Delete User, deletes the user from that Account, but it is still accessible from the user endpoint. It looks like a Disable action.
+ - The updated user object has different properties than the original user object that in created. Therefore, in the `Create.ps1` two account objects are defined. The first one is the original account object to create the object and the second one is the updated account object.
 
-#### User object properties
-
-The user object created in Canvas has a lot of properties that can be set. One of them being the `TimeZone`. According to the documentation the `TimeZone` must be a IANA TimeZone. For example, the IANA zone for `America/Denver` is `MDT`. (Mountain Daylight Time). So, the value of `TimeZone` must be `MDT`.
-
-However; the returned user object returns `America/Denver` instead of `MDT`. This might be a inconsistency in the documentation. But at this point that's unclear.
-
-```powershell
-$account = [PSCustomObject]@{
-    # User [user]
-    # The 'name' is the full name of the person
-    'user[name]' = "$($p.Name.GivenName) $($p.Name.FamilyName)"
-
-    # The 'short_name' is the user's name as it will be displayed in the UI
-    'user[short_name]'    = $p.DisplayName
-    'user[sortable_name]' = ""
-
-    # Timezones myst be IANA time zones like: CE, CEST, CEMT
-    'user[time_zone]'         = 'CEST'
-    'user[terms_of_use]'      = $true
-    'user[skip_registration]' = $true
-
-    # The 'locale' is the user's preferred language like: en, de, nl, nl_BE, en_US, etc..
-    'user[locale]' = 'nl'
-
-    # User [communication_channel]
-    'communication_channel[type]'              = 'email'
-    'communication_channel[address]'           = $p.Accounts.MicrosoftActiveDirectory.mail
-    'communication_channel[skip_confirmation]' = $true
-
-    # User [pseudnonym]
-    # the 'unique_id' for self registration must be set to the emailAddress
-    'pseudnonym[unique_i]'          = $p.ExternalId
-    'pseudnonym[password]'          = 'Work'
-    'pseudnonym[send_confirmation]' = $true
-}
-```
-
-Another thing to note is that the updated user object has different properties than the original user object that was created. Therefore, in the `Create.ps1` two account objects are defined. The first one is the original account object to create the object and the second one is the updated account object.
-
-#### Service account
-
-All API related actions are executed on behalf of the service account. Another implication is that; the users objects created in Canvas are linked to the service account.
 
 #### Creation / correlation process
-A new functionality is the possibility to update the account in the target system during the correlation process. By default this behavior is disabled. Meaning, the account will only be created or correlated.
+A new functionality is the possibility to update the account in the target system during the correlation process. By default, this behavior is disabled. Meaning, the account will only be created or correlated.
 
-You can change this behaviour in the ` create.ps1` by setting the boolean `$updatePerson` to the value of `$true`.
+You can change this behavior in the ` create.ps1` by setting the boolean `$updatePerson` to the value of `$true`.
 
 > Be aware that this might have unexpected implications.
 
