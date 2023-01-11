@@ -112,7 +112,7 @@ try {
                     Headers = $headers
                     Body    = @{
                         user = @{
-                            event = 'suspended'
+                            event = 'suspend'
                         }
                     } | ConvertTo-Json
                 }
