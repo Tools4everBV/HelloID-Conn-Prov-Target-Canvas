@@ -5,9 +5,9 @@
 | :information_source: Information |
 |:---------------------------|
 | This repository contains the connector and configuration code only. The implementer is responsible to acquire the connection details such as username, password, certificate, etc. You might even need to sign a contract or agreement with the supplier before implementing this connector. Please contact the client's application manager to coordinate the connector requirements. |
-
+<br />
 <p align="center">
-  <img src="https://catalog-prod-s3-gallerys3-skf57zr7pimb.s3.amazonaws.com/production/header_images/2f52457da63a9444ebda5c69a57e9de6300d9120.svg">
+  <img src="https://www.tools4ever.nl/connector-logos/canvas-logo.png">
 </p>
 
 ## Table of contents
