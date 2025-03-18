@@ -25,19 +25,9 @@
         "type": "input",
         "defaultValue": "",
         "templateOptions": {
-            "label": "Code",
+            "label": "AccountId",
             "description": "The AccountId under which the user objects are created",
             "required": true
-        }
-    },
-    {
-        "key": "IsDebug",
-        "type": "checkbox",
-        "defaultValue": true,
-        "templateOptions": {
-            "label": "Toggle debug logging",
-            "description": "When toggled, debug logging will be displayed",
-            "required": false
         }
     }
 ]
