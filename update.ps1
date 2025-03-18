@@ -1,38 +1,22 @@
-#####################################################
+#################################################
 # HelloID-Conn-Prov-Target-Canvas-Update
-#
-# Version: 1.0.0
-#####################################################
-# Initialize default values
-$config = $configuration | ConvertFrom-Json
-$p = $person | ConvertFrom-Json
-$aRef = $AccountReference | ConvertFrom-Json
-$success = $false
-$auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-# Account mapping
-$account = [PSCustomObject]@{
-    user = [PSCustomObject]@{
-        name          = $p.DisplayName
-        sortable_name = "$($p.Name.FamilyName), $($p.Name.GivenName)"
-        short_name    = "$($p.Name.GivenName) $($p.Name.FamilyName)"
-        email         = "$($p.Contact.Business.email)"
-        # title         = '' Only possible in Update webrequest
-    }
-}
+# PowerShell V2
+#################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
 
-# Set debug logging
-switch ($($config.IsDebug)) {
-    $true { $VerbosePreference = 'Continue' }
-    $false { $VerbosePreference = 'SilentlyContinue' }
+account = [PSCustomObject]@{
+    user = [PSCustomObject]@{
+        name          = "$($actionContext.Data.name)"      
+        short_name    = "$($actionContext.Data.short_name)"
+        sortable_name = "$($actionContext.Data.sortable_name)"
+        email         = "$($actionContext.Data.email)"      
+    }
 }
 
 #region functions
-
-function Resolve-HTTPError {
+function Resolve-CanvasError {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
@@ -43,41 +27,32 @@ function Resolve-HTTPError {
         $httpErrorObj = [PSCustomObject]@{
             ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
             Line             = $ErrorObject.InvocationInfo.Line
-            ErrorDetails     = ''
-            FriendlyMessage  = ''
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
         }
-        if ($ErrorObject.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') {
-            $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $ErrorObject.ErrorDetails.Message
-
-            if ($null -ne $ErrorObject.ErrorDetails.Message ) {
-                $jsonErrorObject = $ErrorObject.ErrorDetails.Message | ConvertFrom-Json
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
             }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
 
-            $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
+            $httpErrorObj.FriendlyMessage = switch ($errorDetailsObject) {
                 { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
                 { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
                 { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
                 { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
-                default { $ErrorObject.ErrorDetails.Message }
-            }
-
-
-        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
-            if ($null -eq $ErrorObject.Exception.Response) {
-                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message
-                $httpErrorObj.FriendlyMessage = $ErrorObject.Exception.Message
-            } else {
-                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
-                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $streamReaderResponse
-                $jsonErrorObject = $streamReaderResponse | ConvertFrom-Json
-                $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
-                    { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
-                    { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
-                    { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
-                    { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
-                    default { $streamReaderResponse }
-                }
-            }
+                default { $httpErrorObj.ErrorDetails }
+            }           
+           
+        } catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
         }
         Write-Output $httpErrorObj
     }
@@ -85,113 +60,117 @@ function Resolve-HTTPError {
 #endregion
 
 try {
-    Write-Verbose 'Setting authorization header'
+    # Verify if [aRef] has a value
+    if ([string]::IsNullOrEmpty($($actionContext.References.Account))) {
+        throw 'The account reference could not be found'
+    }
+
+    Write-Information 'Verifying if a Canvas account exists'
     $headers = [System.Collections.Generic.Dictionary[string, string]]::new()
-    $headers.Add('Authorization', "Bearer $($config.access_token)")
+    $headers.Add('Authorization', "Bearer $($Actioncontext.configuration.access_token)")
     $headers.Add('Accept', 'application/Json')
     $headers.Add('Content-Type', 'application/Json')
 
-    # Verify if the account must be updated
-    Write-Verbose "Retrieving current account [$aref]"
     $splatParams = @{
-        Uri     = "$($config.BaseUrl)/api/v1/users/$aref"
+        Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/users/$($actionContext.References.Account)"
         Method  = 'GET'
         Headers = $headers
     }
+
     try {
-        $currentAccount = Invoke-RestMethod @splatParams -Verbose:$false
+        $correlatedAccount = Invoke-RestMethod @splatParams -Verbose:$false
     } catch {
         if ($_.Exception.Message -notmatch '404' ) {
             throw $_
         }
     }
+   
+    $outputContext.PreviousData = $correlatedAccount
 
-    Write-Verbose 'Validate if there are any changes in the account between HelloId and Canvas'
-    $updateBody = @{ user = @{} }
-    foreach ($prop in  $account.user.PSObject.Properties) {
-        if ( $currentAccount.$($prop.name) -ne $prop.value) {
-            $updateBody.user.Add($($prop.name), $prop.value)
+    # Always compare the account against the current account in target system  
+
+    if ($null -ne $correlatedAccount) {
+
+        $updateBody = @{ user = @{} }
+        $propertiesChanged = @()
+        foreach ($prop in  $account.user.PSObject.Properties) {
+            if ( $correlatedAccount.$($prop.name) -ne $prop.value) {
+                $updateBody.user.Add($($prop.name), $prop.value)
+                $propertiesChanged += $prop.name
+            }
         }
-    }
-
-    if ($updateBody.user.Count -gt 0 -and ($null -ne $currentAccount)) {
-        $action = 'Update'
-        $dryRunMessage = "Account property(s) required to update: [$($updateBody.user.keys -join ', ')]"
-    } elseif ($updateBody.user.Count -eq 0) {
-        $action = 'NoChanges'
-        $dryRunMessage = 'No changes will be made to the account during enforcement'
-    } elseif ($null -eq $currentAccount) {
+        if ($propertiesChanged.count -eq 0) {
+            $action = 'NoChanges'
+        } else {
+              $action = 'UpdateAccount'          
+        }
+    } else {
         $action = 'NotFound'
-        $dryRunMessage = "Canvas account for: [$($p.DisplayName)] not found. Possibily deleted"
     }
-    Write-Verbose "$dryRunMessage"
+    # Process
+    switch ($action) {
+        'UpdateAccount' {
+            Write-Information "Account property(s) required to update: $($propertiesChanged -join ', ')"
 
-    # Add an auditMessage showing what will happen during enforcement
-    if ($dryRun -eq $true) {
-        Write-Warning "[DryRun] $dryRunMessage"
-    }
-
-    if (-not($dryRun -eq $true)) {
-        switch ($action) {
-            'Update' {
-                Write-Verbose "Updating Canvas account with accountReference: [$aRef]"
+            # Make sure to test with special characters and if needed; add utf8 encoding.
+            if (-not($actionContext.DryRun -eq $true)) {
+                Write-Information "Updating Canvas account with accountReference: [$($actionContext.References.Account)]"
                 $splatParams = @{
-                    Uri     = "$($config.BaseUrl)/api/v1/users/$aref"
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/api/v1/users/$($actionContext.References.Account)"
                     Method  = 'PUT'
                     Headers = $headers
                     Body    = $updateBody | ConvertTo-Json
                 }
                 $null = Invoke-RestMethod @splatParams -Verbose:$false
-                $success = $true
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = 'Update account was successful'
-                        IsError = $false
-                    })
-                break
+
+            } else {
+                Write-Information "[DryRun] Update Canvas account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
 
-            'NoChanges' {
-                Write-Verbose "No changes to Canvas account with accountReference: [$aRef]"
+            $outputContext.Data = $actionContext.Data
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged.name -join ',')]"
+                    IsError = $false
+                })
+            break
+        }
 
-                $success = $true
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = 'No changes will be made to the account during enforcement'
-                        IsError = $false
-                    })
-                break
-            }
+        'NoChanges' {
+            Write-Information "No changes to Canvas account with accountReference: [$($actionContext.References.Account)]"
 
-            'NotFound' {
-                $success = $false
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = "Canvas account for: [$($p.DisplayName)] not found. Possibily deleted"
-                        IsError = $true
-                    })
-                break
-            }
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = 'No changes will be made to the account during enforcement'
+                    IsError = $false
+                })
+            break
+        }
+
+        'NotFound' {
+            Write-Information "Canvas account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+            $outputContext.Success = $false
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = "Canvas account with accountReference: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+                    IsError = $true
+                })
+            break
         }
     }
 } catch {
-    $success = $false
+    $outputContext.Success  = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
-        $errorObj = Resolve-HTTPError -ErrorObject $ex
+        $errorObj = Resolve-CanvasError -ErrorObject $ex
         $auditMessage = "Could not update Canvas account. Error: $($errorObj.FriendlyMessage)"
-        Write-Verbose "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+        Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     } else {
         $auditMessage = "Could not update Canvas account. Error: $($ex.Exception.Message)"
-        Write-Verbose "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+        Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-    $auditLogs.Add([PSCustomObject]@{
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
             Message = $auditMessage
             IsError = $true
         })
-} finally {
-    $result = [PSCustomObject]@{
-        Success   = $success
-        Account   = $account
-        Auditlogs = $auditLogs
-    }
-    Write-Output $result | ConvertTo-Json -Depth 10
 }

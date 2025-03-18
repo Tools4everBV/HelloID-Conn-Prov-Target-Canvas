@@ -1,69 +1,43 @@
-#####################################################
+#################################################
 # HelloID-Conn-Prov-Target-Canvas-Create
-#
-# Version: 1.0.0
-#####################################################
-# Initialize default values
-$config = $configuration | ConvertFrom-Json
-$p = $person | ConvertFrom-Json
-$success = $false
-$auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
+# PowerShell V2
+#################################################
+
+# Enable TLS1.2
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
 
 # Account mapping
 $account = [PSCustomObject]@{
     # The 'name' is the full name of the person
     # The 'short_name' is the user's name as it will be displayed in the UI
-    # Timezones myst be IANA time zones like: CE, CEST, CEMT
+    # Timezones must be IANA time zones like: CE, CEST, CEMT
     # The 'locale' is the user's preferred language like: en, de, nl, nl_BE, en_US, etc..
     user                  = @{
-        name              = $p.DisplayName
-        short_name        = "$($p.Name.GivenName) $($p.Name.FamilyName)"
-        sortable_name     = "$($p.Name.FamilyName), $($p.Name.GivenName)"
-        time_zone         = 'CEST'
+        name              = "$($actionContext.Data.name)"
+        short_name        = "$($actionContext.Data.short_name)"
+        sortable_name     = "$($actionContext.Data.sortable_name)"
+        time_zone         = "$($actionContext.Data.time_zone)"
         terms_of_use      = $true
         skip_registration = $true
-        locale            = 'nl'
+        locale            = "$($actionContext.Data.locale)"
     }
     communication_channel = @{
         type              = 'email'
-        address           = "$($p.Contact.Business.email)"
+        address           = "$($actionContext.Data.email)"
         skip_confirmation = $true
     }
     # the 'unique_id' for self registration must be set to the emailAddress
     pseudonym             = @{
-        unique_id         = "$($p.Contact.Business.email)"
-        password          = 'Welkom123xxxxxxx'
+        unique_id         = "$($actionContext.Data.email)"
+        password          = "$($Actioncontext.Data.password)"
         send_confirmation = $true
         sis_user_id       = ''
         integration_id    = ''
     }
 }
 
-$accountUpdateBody = [PSCustomObject]@{
-    user = [PSCustomObject]@{
-        name          = $account.user.name
-        short_name    = $account.user.short_name
-        sortable_name = $account.user.sortable_name
-        email         = $account.communication_channel.address
-        # title         = '' Only possible in Update webrequest
-    }
-}
-
-
-# Enable TLS1.2
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-
-# Set debug logging
-switch ($($config.IsDebug)) {
-    $true { $VerbosePreference = 'Continue' }
-    $false { $VerbosePreference = 'SilentlyContinue' }
-}
-
-# Set to true if accounts in the target system must be updated
-$updatePerson = $true
-
 #region functions
-function Resolve-HTTPError {
+function Resolve-CanvasError {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
@@ -74,145 +48,131 @@ function Resolve-HTTPError {
         $httpErrorObj = [PSCustomObject]@{
             ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
             Line             = $ErrorObject.InvocationInfo.Line
-            ErrorDetails     = ''
-            FriendlyMessage  = ''
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
         }
-        if ($ErrorObject.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') {
-            $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $ErrorObject.ErrorDetails.Message
-
-            if ($null -ne $ErrorObject.ErrorDetails.Message ) {
-                $jsonErrorObject = $ErrorObject.ErrorDetails.Message | ConvertFrom-Json
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
             }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
 
-            $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
+            $httpErrorObj.FriendlyMessage = switch ($errorDetailsObject) {
                 { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
                 { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
                 { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
                 { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
-                default { $ErrorObject.ErrorDetails.Message }
-            }
-
-
-        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
-            if ($null -eq $ErrorObject.Exception.Response) {
-                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message
-                $httpErrorObj.FriendlyMessage = $ErrorObject.Exception.Message
-            } else {
-                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
-                $httpErrorObj.ErrorDetails = $ErrorObject.Exception.Message + $streamReaderResponse
-                $jsonErrorObject = $streamReaderResponse | ConvertFrom-Json
-                $httpErrorObj.FriendlyMessage = switch ($jsonErrorObject) {
-                    { -not [string]::IsNullOrWhiteSpace($_.errors.message) } { $_.errors.message }
-                    { -not [string]::IsNullOrWhiteSpace($_.message) } { $_.message }
-                    { $null -ne $_.errors.pseudonym.password } { "Incorrect Password [$($_.errors.pseudonym.password.message -join ', ')]" }
-                    { $null -ne $_.errors.pseudonym.unique_id } { "Incorrect unique_id [$($_.errors.pseudonym.unique_id.message -join ', '))]" }
-                    default { $streamReaderResponse }
-                }
-            }
+                default { $httpErrorObj.ErrorDetails }
+            }           
+           
+        } catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
         }
         Write-Output $httpErrorObj
     }
 }
 #endregion
 
-# Begin
 try {
-    Write-Verbose 'Setting authorization header'
+    # Initial Assignments
+    $outputContext.AccountReference = 'Currently not available'
+
     $headers = [System.Collections.Generic.Dictionary[string, string]]::new()
-    $headers.Add('Authorization', "Bearer $($config.access_token)")
+    $headers.Add('Authorization', "Bearer $($Actioncontext.configuration.access_token)")
     $headers.Add('Accept', 'application/Json')
     $headers.Add('Content-Type', 'application/Json')
 
-    # Verify if a user must be either [created and correlated], [updated and correlated] or just [correlated]
-    Write-Verbose "Retrieving accounts with [search_term=$($account.pseudonym.unique_id)]"
-    $splatParams = @{
-        Uri     = "$($config.BaseUrl)/api/v1/accounts/$($config.AccountId)/users?search_term=$($account.pseudonym.unique_id)"
-        Method  = 'GET'
-        Headers = $headers
-    }
-    $response = Invoke-RestMethod @splatParams -Verbose:$false
-    $responseUser = $response | Where-Object { $_.login_id -eq $account.pseudonym.unique_id }
 
-    if (-not($responseUser)) {
-        $action = 'Create-Correlate'
-    } elseif ($updatePerson -eq $true) {
-        $action = 'Update-Correlate'
+    # Validate correlation configuration
+    if ($actionContext.CorrelationConfiguration.Enabled) {
+        $correlationField = $actionContext.CorrelationConfiguration.AccountField
+        $correlationValue = $actionContext.CorrelationConfiguration.PersonFieldValue
+
+        if ([string]::IsNullOrEmpty($($correlationField))) {
+            throw 'Correlation is enabled but not configured correctly'
+        }
+        if ([string]::IsNullOrEmpty($($correlationValue))) {
+            throw 'Correlation is enabled but [PersonFieldValue] is empty. Please make sure it is correctly mapped'
+        }
+
+        # Determine if a user needs to be [created] or [correlated]
+
+       
+        $splatParams = @{
+            Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/accounts/$($Actioncontext.configuration.AccountId)/users?search_term=$correlationValue"
+            Method  = 'GET'
+            Headers = $headers
+        }
+        $response = Invoke-RestMethod @splatParams -Verbose:$false
+        $correlatedAccount = $response | Where-Object { $_.login_id -eq $correlationValue }                   
+    }
+
+    if ($null -ne $correlatedAccount) {
+        $action = 'CorrelateAccount'
     } else {
-        $action = 'Correlate'
-    }
-
-    # Add an auditMessage showing what will happen during enforcement
-    if ($dryRun -eq $true) {
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "$action Canvas account for: [$($p.DisplayName)], will be executed during enforcement"
-            })
+        $action = 'CreateAccount'
     }
 
     # Process
-    if (-not($dryRun -eq $true)) {
-        switch ($action) {
-            'Create-Correlate' {
-                Write-Verbose 'Creating and correlating Canvas account'
-                $splatParams = @{
-                    Uri     = "$($config.BaseUrl)/api/v1/accounts/$($config.AccountId)/users"
-                    Method  = 'POST'
-                    Headers = $headers
-                    Body    = $account | ConvertTo-Json
-                }
-                $response = Invoke-RestMethod @splatParams -Verbose:$false
-                $accountReference = $response.id
-                break
+    switch ($action) {
+        'CreateAccount' {
+            $splatCreateParams = @{
+                Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/accounts/$($Actioncontext.configuration.AccountId)/users"
+                Method  = 'POST'
+                Headers = $headers
+                Body    = $account | ConvertTo-Json
             }
 
-            'Update-Correlate' {
-                Write-Verbose 'Updating and correlating Canvas account'
-                $splatParams = @{
-                    Uri     = "$($config.BaseUrl)/api/v1/users/$($responseUser.id)"
-                    Method  = 'PUT'
-                    Headers = $headers
-                    Body    = $accountUpdateBody  | ConvertTo-Json
-                }
-                $response = Invoke-RestMethod @splatParams -Verbose:$false
-                $accountReference = $response.id
-                break
+            # Make sure to test with special characters and if needed; add utf8 encoding.
+            if (-not($actionContext.DryRun -eq $true)) {
+                Write-Information 'Creating and correlating Canvas account'               
+                $createdAccount = Invoke-RestMethod @splatCreateParams
+                $outputContext.Data = $createdAccount
+                $outputContext.AccountReference = $createdAccount.Id
+            } else {
+                Write-Information '[DryRun] Create and correlate Canvas account, will be executed during enforcement'
             }
-
-            'Correlate' {
-                Write-Verbose "Correlating Canvas account"
-                $accountReference = $responseUser.id
-                break
-            }
+            $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
+            break
         }
 
-        $success = $true
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "$action account was successful. AccountReference is: [$accountReference]"
-                IsError = $false
-            })
+        'CorrelateAccount' {
+            Write-Information 'Correlating Canvas account'
+            $outputContext.Data = $correlatedAccount
+            $outputContext.AccountReference = $correlatedAccount.Id
+            $outputContext.AccountCorrelated = $true
+            $auditLogMessage = "Correlated account: [$($outputContext.AccountReference)] on field: [$($correlationField)] with value: [$($correlationValue)]"
+            break
+        }
     }
+
+    $outputContext.success = $true
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Action  = $action
+            Message = $auditLogMessage
+            IsError = $false
+        })
 } catch {
-    $success = $false
+    $outputContext.success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
-        $errorObj = Resolve-HTTPError -ErrorObject $ex
-        $auditMessage = "Could not $action Canvas account. Error: $($errorObj.FriendlyMessage)"
-        Write-Verbose "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+        $errorObj = Resolve-CanvasError -ErrorObject $ex
+        $auditMessage = "Could not create or correlate Canvas account. Error: $($errorObj.FriendlyMessage)"
+        Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     } else {
-        $auditMessage = "Could not $action Canvas account. Error: $($ex.Exception.Message)"
-        Write-Verbose "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+        $auditMessage = "Could not create or correlate Canvas account. Error: $($ex.Exception.Message)"
+        Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-    $auditLogs.Add([PSCustomObject]@{
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
             Message = $auditMessage
             IsError = $true
         })
-    # End
-} finally {
-    $result = [PSCustomObject]@{
-        Success          = $success
-        AccountReference = $accountReference
-        Auditlogs        = $auditLogs
-        # Account          = $account
-    }
-    Write-Output $result | ConvertTo-Json -Depth 10
 }

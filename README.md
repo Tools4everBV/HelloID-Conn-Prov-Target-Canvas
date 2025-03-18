@@ -1,45 +1,36 @@
-
 # HelloID-Conn-Prov-Target-Canvas
 
+> [!IMPORTANT]
+> This repository contains the connector and configuration code only. The implementer is responsible to acquire the connection details such as username, password, certificate, etc. You might even need to sign a contract or agreement with the supplier before implementing this connector. Please contact the client's application manager to coordinate the connector requirements.
 
-| :information_source: Information |
-|:---------------------------|
-| This repository contains the connector and configuration code only. The implementer is responsible to acquire the connection details such as username, password, certificate, etc. You might even need to sign a contract or agreement with the supplier before implementing this connector. Please contact the client's application manager to coordinate the connector requirements. |
-<br />
 <p align="center">
-  <img src="https://www.tools4ever.nl/connector-logos/canvas-logo.png">
+  <img src="">
 </p>
 
 ## Table of contents
 
-- [Introduction](#Introduction)
-- [Getting started](#Getting-started)
-  + [Connection settings](#Connection-settings)
-  + [Prerequisites](#Prerequisites)
-  + [Remarks](#Remarks)
-- [Setup the connector](@Setup-The-Connector)
-- [Getting help](#Getting-help)
-- [HelloID Docs](#HelloID-docs)
+- [HelloID-Conn-Prov-Target-Canvas](#helloid-conn-prov-target-Canvas)
+  - [Table of contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Getting started](#getting-started)
+    - [Prerequisites](#prerequisites)
+    - [Connection settings](#connection-settings)
+    - [Correlation configuration](#correlation-configuration)
+    - [Available lifecycle actions](#available-lifecycle-actions)
+    - [Field mapping](#field-mapping)
+  - [Remarks](#remarks)
+  - [Development resources](#development-resources)
+    - [API endpoints](#api-endpoints)
+    - [API documentation](#api-documentation)
+  - [Getting help](#getting-help)
+  - [HelloID docs](#helloid-docs)
 
 ## Introduction
 
-_HelloID-Conn-Prov-Target-Canvas_ is a _target_ connector. Canvas provides a set of REST API's that allow you to programmatically interact with it's data. The HelloID connector uses the API endpoints listed in the table below.
-
-| Endpoint                           | Description                               |
-| ------------                       | -----------                               |
-| /api/v1/accounts/:account_id/users | The endpoint for all user related actions |
+_HelloID-Conn-Prov-Target-Canvas_ is a _target_ connector. _Canvas_ provides a set of REST API's that allow you to programmatically interact with its data.
 
 ## Getting started
 
-### Connection settings
-
-The following settings are required to connect to the API.
-
-| Setting           | Description                                             |  Mandatory  |
-| ------------      | -----------                                             | ----------- |
-| Access Token      | The Access Token to connect to the API                  | Yes         |
-| BaseUrl           | The URL to the API                                      | Yes         |
-| AccountId         | The AccountId under which the user objects are created (Id of the company) | Yes         |
 ### Prerequisites
 
 - An Access Token to connect to the API
@@ -55,28 +46,79 @@ The following settings are required to connect to the API.
     $response | ConvertTo-Json
   ```
 
-### Remarks
+
+### Connection settings
+
+The following settings are required to connect to the API.
+
+| Setting           | Description                                             |  Mandatory  |
+| ------------      | -----------                                             | ----------- |
+| Access Token      | The Access Token to connect to the API                  | Yes         |
+| BaseUrl           | The URL to the API                                      | Yes         |
+| AccountId         | The AccountId under which the user objects are created (Id of the company) | Yes         |
+
+### Correlation configuration
+
+The correlation configuration is used to specify which properties will be used to match an existing account within _Canvas_ to a person in _HelloID_. 
+
+
+| Setting                   | Value                             |
+| ------------------------- | --------------------------------- |
+| Enable correlation        | `True`                            |
+| Person correlation field  | `Accounts.MicrosoftActiveDirectory.mail` |
+| Account correlation field | `email`                  |
+
+> [!TIP]
+> _For more information on correlation, please refer to our correlation [documentation](https://docs.helloid.com/en/provisioning/target-systems/powershell-v2-target-systems/correlation.html) pages_.
+
+### Available lifecycle actions
+
+The following lifecycle actions are available:
+
+| Action                                  | Description                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| create.ps1                              | Creates a new account.                                                                      |
+| delete.ps1                              | Removes an existing user account or entity from the customer account.                       |
+| disable.ps1                             | Disables an account, preventing access without permanent removal.                           |
+| enable.ps1                              | Enables an account, granting access.                                                        |
+| update.ps1                              | Updates the attributes of an account.                                                       |
+| configuration.json                      | Contains the connection settings and general configuration for the connector.               |
+| fieldMapping.json                       | Defines mappings between person fields and target system person account fields.             |
+
+### Field mapping
+
+The field mapping can be imported by using the _fieldMapping.json_ file.
+
+## Remarks
+
   - > The delete process might lead to some unexpected behavior.
-  Please verify the delete process. So it matches the customer's requirements.  This because we create users to an Account (company), but the action Delete User, deletes the user from that Account, but it is still accessible from the user endpoint. It looks like a Disable action.
- - The updated user object has different properties than the original user object that in created. Therefore, in the `Create.ps1` two account objects are defined. The first one is the original account object to create the object and the second one is the updated account object.
+  Please verify the delete process. So it matches the customer's requirements.  This because we create users to an Account (company), but the action Delete User, removes the user from that Account, but it is still accessible from the user endpoint. It behaves  like a Disable action.
+ - The user object used in the update has fewer properties than the original user object that is created. Therefore, the account object in the `Create.ps1` differs from the one in `Update.ps1`.
 
+## Development resources
 
-#### Creation / correlation process
-A new functionality is the possibility to update the account in the target system during the correlation process. By default, this behavior is disabled. Meaning, the account will only be created or correlated.
+### API endpoints
 
-You can change this behavior in the ` create.ps1` by setting the boolean `$updatePerson` to the value of `$true`.
+The following endpoints are used by the connector
 
-> Be aware that this might have unexpected implications.
+| Endpoint | Description               |
+| -------- | ------------------------- |
+| /api/v1/accounts[/<account_id>]/users[/<user_id>]   | The endpoints for all user related actions |
+|
 
-## Setup the connector
+### API documentation
 
-> No special actions are required to setup the connector in HelloID.
+<!--
+If publicly available, provide the link to the API documentation
+-->
 
 ## Getting help
 
-> _For more information on how to configure a HelloID PowerShell connector, please refer to our [documentation](https://docs.helloid.com/hc/en-us/articles/360012558020-Configure-a-custom-PowerShell-target-system) pages_
+> [!TIP]
+> _For more information on how to configure a HelloID PowerShell connector, please refer to our [documentation](https://docs.helloid.com/en/provisioning/target-systems/powershell-v2-target-systems.html) pages_.
 
-> _If you need help, feel free to ask questions on our [forum](https://forum.helloid.com)_
+> [!TIP]
+>  _If you need help, feel free to ask questions on our [forum](https://forum.helloid.com)_.
 
 ## HelloID docs
 
