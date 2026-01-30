@@ -46,6 +46,12 @@ _HelloID-Conn-Prov-Target-Canvas_ is a _target_ connector. _Canvas_ provides a s
     $response | ConvertTo-Json
   ```
 
+## Remarks
+
+### Attribute for SSO
+
+- sis_user_id is needed for SSO
+
 
 ### Connection settings
 

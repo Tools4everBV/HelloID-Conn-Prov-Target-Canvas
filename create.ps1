@@ -31,7 +31,7 @@ $account = [PSCustomObject]@{
         unique_id         = "$($actionContext.Data.email)"
         password          = "$($Actioncontext.Data.password)"
         send_confirmation = $true
-        sis_user_id       = ''
+        sis_user_id       = "$($Actioncontext.Data.sis_user_id)"
         integration_id    = ''
     }
 }
