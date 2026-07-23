@@ -28,7 +28,7 @@ $account = [PSCustomObject]@{
     }
     # the 'unique_id' for self registration must be set to the emailAddress
     pseudonym             = @{
-        unique_id         = "$($actionContext.Data.email)"
+        unique_id         = "$($actionContext.Data.login_id)"
         password          = "$($Actioncontext.Data.password)"
         send_confirmation = $true
         sis_user_id       = "$($Actioncontext.Data.sis_user_id)"
@@ -53,7 +53,8 @@ function Resolve-CanvasError {
         }
         if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
             $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
-        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+        }
+        elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
             if ($null -ne $ErrorObject.Exception.Response) {
                 $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
                 if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
@@ -72,7 +73,8 @@ function Resolve-CanvasError {
                 default { $httpErrorObj.ErrorDetails }
             }           
            
-        } catch {
+        }
+        catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
         }
         Write-Output $httpErrorObj
@@ -103,7 +105,6 @@ try {
         }
 
         # Determine if a user needs to be [created] or [correlated]
-
        
         $splatParams = @{
             Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/accounts/$($Actioncontext.configuration.AccountId)/users?search_term=$correlationValue"
@@ -111,12 +112,13 @@ try {
             Headers = $headers
         }
         $response = Invoke-RestMethod @splatParams -Verbose:$false
-        $correlatedAccount = $response | Where-Object { $_.login_id -eq $correlationValue }                   
+        $correlatedAccount = $response | Where-Object { $_.login_id -eq $correlationValue } 
     }
 
     if ($null -ne $correlatedAccount) {
         $action = 'CorrelateAccount'
-    } else {
+    }
+    else {
         $action = 'CreateAccount'
     }
 
@@ -136,7 +138,8 @@ try {
                 $createdAccount = Invoke-RestMethod @splatCreateParams
                 $outputContext.Data = $createdAccount
                 $outputContext.AccountReference = $createdAccount.Id
-            } else {
+            }
+            else {
                 Write-Information '[DryRun] Create and correlate Canvas account, will be executed during enforcement'
             }
             $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
@@ -159,7 +162,8 @@ try {
             Message = $auditLogMessage
             IsError = $false
         })
-} catch {
+}
+catch {
     $outputContext.success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
@@ -167,7 +171,8 @@ try {
         $errorObj = Resolve-CanvasError -ErrorObject $ex
         $auditMessage = "Could not create or correlate Canvas account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
-    } else {
+    }
+    else {
         $auditMessage = "Could not create or correlate Canvas account. Error: $($ex.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
