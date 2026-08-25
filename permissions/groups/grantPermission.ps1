@@ -1,19 +1,10 @@
-#################################################
-# HelloID-Conn-Prov-Target-Canvas-Update
+################################################################
+# HelloID-Conn-Prov-Target-Canvas-GrantPermission-Group
 # PowerShell V2
-#################################################
+################################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-
-$account = [PSCustomObject]@{
-    user = [PSCustomObject]@{
-        name          = "$($actionContext.Data.name)"      
-        short_name    = "$($actionContext.Data.short_name)"
-        sortable_name = "$($actionContext.Data.sortable_name)"
-        email         = "$($actionContext.Data.email)"
-    }
-}
 
 #region functions
 function Resolve-CanvasError {
@@ -61,132 +52,92 @@ function Resolve-CanvasError {
 }
 #endregion
 
+# Begin
 try {
-    # Verify if [aRef] has a value
+    # Verify if [accountReference] has a value
     if ([string]::IsNullOrEmpty($($actionContext.References.Account))) {
         throw 'The account reference could not be found'
     }
 
-    Write-Information 'Verifying if a Canvas account exists'
     $headers = [System.Collections.Generic.Dictionary[string, string]]::new()
     $headers.Add('Authorization', "Bearer $($Actioncontext.configuration.access_token)")
     $headers.Add('Accept', 'application/Json')
     $headers.Add('Content-Type', 'application/Json')
 
-    $splatParams = @{
-        Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/users/$($actionContext.References.Account)"
-        Method  = 'GET'
-        Headers = $headers
-    }
-
     try {
-        $correlatedAccount = Invoke-RestMethod @splatParams -Verbose:$false
+        Write-Information 'Verifying if a Canvas account exists'
+        $splatParams = @{
+            Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/users/$($actionContext.References.Account)"
+            Method  = 'GET'
+            Headers = $headers
+        }        
+        $correlatedAccount = Invoke-RestMethod @splatParams -Verbose:$false        
     }
     catch {
         if ($_.Exception.Message -notmatch '404' ) {
             throw $_
         }
     }
-   
-    $outputContext.PreviousData = $correlatedAccount
-
-    # Always compare the account against the current account in target system  
 
     if ($null -ne $correlatedAccount) {
-
-        $updateBody = @{ user = @{} }
-        $propertiesChanged = @()
-        foreach ($prop in  $account.user.PSObject.Properties) {
-            if ( $correlatedAccount.$($prop.name) -ne $prop.value) {
-                $updateBody.user.Add($($prop.name), $prop.value)
-                $propertiesChanged += $prop.name
-            }
-        }
-        if ($propertiesChanged.count -eq 0) {
-            $action = 'NoChanges'
-        }
-        else {
-            $action = 'UpdateAccount'          
-        }
+        $lifecycleProcess = 'GrantPermission'
     }
     else {
-        $action = 'NotFound'
+        $lifecycleProcess = 'NotFound'
     }
-    # Process
-    switch ($action) {
-        'UpdateAccount' {
-            Write-Information "Account property(s) required to update: $($propertiesChanged -join ', ')"
 
+    # Process
+    switch ($lifecycleProcess) {
+        'GrantPermission' {
             # Make sure to test with special characters and if needed; add utf8 encoding.
             if (-not($actionContext.DryRun -eq $true)) {
-                Write-Information "Updating Canvas account with accountReference: [$($actionContext.References.Account)]"
+                Write-Information "Granting Canvas permission: [$($actionContext.PermissionDisplayName)] - [$($actionContext.References.Permission.Reference)]"
                 $splatParams = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/api/v1/users/$($actionContext.References.Account)"
-                    Method  = 'PUT'
+                    Uri     = "$($Actioncontext.configuration.BaseUrl)/api/v1/groups/$($actionContext.References.Permission.Reference)/memberships?user_id=$($actionContext.References.Account)"
+                    Method  = 'POST'
                     Headers = $headers
-                    Body    = $updateBody | ConvertTo-Json
-                }
-                $updatedUser = Invoke-RestMethod @splatParams -Verbose:$false
-
+                }        
+                $grantedPermission = Invoke-RestMethod @splatParams -Verbose:$false
+                Write-Information "Canvas permission: [$($actionContext.PermissionDisplayName)] - [$($actionContext.References.Permission.Reference)] succesfully granted with membership_id [$($grantedPermission.id)]"
             }
             else {
-                Write-Information "[DryRun] Update Canvas account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
-            }
-
-            $outputContext.Data = $actionContext.Data                        
-
-            if ('id' -notin $outputContext.Data.PSObject.Properties) {
-                $outputContext.Data | Add-Member -Type NoteProperty -Name 'id' -Value $($updatedUser.id)
+                Write-Information "[DryRun] Grant Canvas permission: [$($actionContext.PermissionDisplayName)] - [$($actionContext.References.Permission.Reference)], will be executed during enforcement"
             }
 
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged -join ',')]"
+                    Message = "Grant permission [$($actionContext.PermissionDisplayName)] was successful"
                     IsError = $false
                 })
-            break
-        }
-
-        'NoChanges' {
-            Write-Information "No changes to Canvas account with accountReference: [$($actionContext.References.Account)]"
-            $outputContext.Data.id = $correlatedAccount.id
-            $outputContext.Success = $true
-            $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = 'No changes will be made to the account during enforcement'
-                    IsError = $false
-                })
-                
             break
         }
 
         'NotFound' {
-            Write-Information "Canvas account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+            Write-Information "Canvas account: [$($actionContext.References.Account)] could not be found, indicating that it may have been deleted"
             $outputContext.Success = $false
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = "Canvas account with accountReference: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+                    Message = "Canvas account: [$($actionContext.References.Account)] could not be found, indicating that it may have been deleted"
                     IsError = $true
                 })
             break
         }
-
-        
     }
 }
 catch {
-    $outputContext.Success = $false
+    $outputContext.success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-CanvasError -ErrorObject $ex
-        $auditMessage = "Could not update Canvas account. Error: $($errorObj.FriendlyMessage)"
+        $auditLogMessage = "Could not grant Canvas permission for account: [$($actionContext.References.Account)]. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     }
     else {
-        $auditMessage = "Could not update Canvas account. Error: $($ex.Exception.Message)"
+        $auditLogMessage = "Could not grant Canvas permission for account: [$($actionContext.References.Account)]. Error: $($_.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
     $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Message = $auditMessage
+            Message = $auditLogMessage
             IsError = $true
         })
 }
